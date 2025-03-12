@@ -1,6 +1,6 @@
-# E-Book MCP Server
+# E-Book MCP Server with PDF Conversion
 
-A Machine Comprehension Protocol (MCP) server for creating e-books and PDF documents from HTML content with embedded images.
+A server for creating e-books and PDF documents from HTML content with embedded images. This project provides robust functionality for converting HTML files to PDF while properly handling embedded images.
 
 ## Features
 
@@ -15,20 +15,20 @@ A Machine Comprehension Protocol (MCP) server for creating e-books and PDF docum
 - Python 3.9+
 - wkhtmltopdf (optional but recommended for better PDF quality)
 - Python packages:
-  - mcp
   - fastapi
   - python-docx
   - pdfkit
   - reportlab
   - pydantic
   - uvicorn
+  - pillow
 
 ## Installation
 
 1. Clone this repository
 2. Install the required Python packages:
    ```
-   pip install -r requirements.txt
+   pip install fastapi python-docx pdfkit reportlab pydantic uvicorn pillow
    ```
 3. Install wkhtmltopdf (optional):
    - Windows: Download and install from [wkhtmltopdf.org](https://wkhtmltopdf.org/downloads.html)
@@ -37,10 +37,10 @@ A Machine Comprehension Protocol (MCP) server for creating e-books and PDF docum
 
 ## Usage
 
-The server provides an MCP tool called `CREATE_DOC` that accepts the following arguments:
+The server provides a function called `handle_call_tool` that accepts the following arguments:
 
-```json
-{
+```python
+arguments = {
   "text_file": "path/to/input.html",
   "images": {
     "image1.png": "path/to/image1.png",
@@ -70,6 +70,11 @@ result = await handle_call_tool("CREATE_DOC", {
 3. It attempts to convert the HTML to PDF using pdfkit (if available)
 4. If pdfkit fails or is not available, it falls back to reportlab
 5. The resulting PDF is saved to the specified output path
+
+## Project Structure
+
+- `main.py`: Contains the core functionality for PDF conversion
+- `pyproject.toml`: Project metadata and dependencies
 
 ## License
 
