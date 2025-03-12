@@ -1,8 +1,0 @@
-mcp>=0.1.0
-fastapi>=0.95.0
-python-docx>=0.8.11
-pdfkit>=1.0.0
-reportlab>=3.6.12
-pydantic>=2.0.0
-uvicorn>=0.21.1
-pillow>=9.5.0
