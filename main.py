@@ -141,7 +141,7 @@ def html_to_pdf_with_reportlab(html_path, pdf_path):
                     attrs_dict = dict(attrs)
                     if 'src' in attrs_dict:
                         self.elements.append(('img', attrs_dict['src'], attrs_dict.get('alt', '')))
-                
+            
             def handle_endtag(self, tag):
                 if tag == 'h1':
                     self.in_title = False
@@ -235,35 +235,6 @@ def html_to_pdf_with_reportlab(html_path, pdf_path):
                     # Add a placeholder for the missing image
                     flowables.append(Paragraph(f"[Image not found: {img_path}]", styles['Italic']))
                     flowables.append(Spacer(1, 12))
-        
-        # Additional check for images in HTML using regex
-        if not parser.image_found:
-            print("No images found with HTML parser, trying regex pattern", file=sys.stderr)
-            img_pattern = re.compile(r'<img\s+src=[\'"]([^\'"]+)[\'"]')
-            img_matches = img_pattern.findall(html_content)
-            
-            for img_src in img_matches:
-                img_path = img_src
-                img_path_obj = Path(img_path)
-                
-                if img_path_obj.exists():
-                    try:
-                        print(f"Adding image (regex) to PDF: {img_path}", file=sys.stderr)
-                        # Check if the file is actually an image
-                        from PIL import Image as PILImage
-                        # Try to open the image to verify it's valid
-                        with PILImage.open(img_path_obj) as img_check:
-                            pass  # Just checking if it opens
-                        
-                        # If we get here, the image is valid
-                        img = ReportLabImage(img_path, width=400, height=300)
-                        flowables.append(img)
-                        flowables.append(Spacer(1, 12))
-                    except Exception as img_check_error:
-                        print(f"Warning: File exists but is not a valid image: {img_path}", file=sys.stderr)
-                        print(f"Error details: {str(img_check_error)}", file=sys.stderr)
-                else:
-                    print(f"Warning: Image file not found: {img_path}", file=sys.stderr)
         
         # If we have no flowables, add a default message
         if not flowables:
@@ -409,17 +380,10 @@ async def handle_call_tool(
                     html_content = html_content.replace(f"src='{img_src}'", f"src='{abs_path}'")
                     replacements += 1
             
-            # If no replacements were made, try to add the images at the end of the body
+            # If no replacements were made, log a message but don't add images to the bottom
             if replacements == 0 and images:
-                print("No image references found in the HTML. Attempting to add images at the end of the body.", file=sys.stderr)
-                body_end_tag = "</body>"
-                if body_end_tag in html_content:
-                    image_html = ""
-                    for img_name, img_path in images.items():
-                        image_html += f'<div class="image-container"><img src="{img_path}" alt="{img_name}"></div>\n'
-                    
-                    html_content = html_content.replace(body_end_tag, f"{image_html}{body_end_tag}")
-                    print(f"Added {len(images)} images at the end of the body.", file=sys.stderr)
+                print("No image references found in the HTML. Images will not be added automatically.", file=sys.stderr)
+                # We're not adding images at the bottom of the document
             
             # Write the processed HTML to the temporary directory
             doc_path = os.path.join(temp_dir, os.path.basename(text_file_path))
