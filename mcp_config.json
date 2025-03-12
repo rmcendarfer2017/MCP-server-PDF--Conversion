@@ -1,0 +1,7 @@
+{
+  "servers": {
+    "e-book": {
+      "command": ["python", "main.py"]
+    }
+  }
+}
