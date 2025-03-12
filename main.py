@@ -119,6 +119,9 @@ def html_to_pdf_with_reportlab(html_path, pdf_path):
                 self.in_title = False
                 self.in_heading = False
                 self.in_paragraph = False
+                self.in_list_item = False
+                self.current_list_type = None  # 'ul' or 'ol'
+                self.list_item_count = 0
                 self.elements = []
                 self.image_found = False
             
@@ -141,6 +144,16 @@ def html_to_pdf_with_reportlab(html_path, pdf_path):
                     attrs_dict = dict(attrs)
                     if 'src' in attrs_dict:
                         self.elements.append(('img', attrs_dict['src'], attrs_dict.get('alt', '')))
+                elif tag == 'ul' or tag == 'ol':
+                    self.flush_buffer()
+                    self.current_list_type = tag
+                    self.list_item_count = 0
+                    # Start a new list
+                    self.elements.append(('list_start', tag))
+                elif tag == 'li':
+                    self.flush_buffer()
+                    self.in_list_item = True
+                    self.list_item_count += 1
             
             def handle_endtag(self, tag):
                 if tag == 'h1':
@@ -152,12 +165,21 @@ def html_to_pdf_with_reportlab(html_path, pdf_path):
                 elif tag == 'p':
                     self.in_paragraph = False
                     self.add_element('paragraph', self.data_buffer)
+                elif tag == 'li':
+                    self.in_list_item = False
+                    # Add list item with its content and the list type
+                    self.add_element('list_item', self.data_buffer, self.current_list_type, self.list_item_count)
+                elif tag == 'ul' or tag == 'ol':
+                    # End the list
+                    self.current_list_type = None
+                    self.list_item_count = 0
+                    self.elements.append(('list_end', tag))
                 
                 self.data_buffer = ""
                 self.current_tag = None
             
             def handle_data(self, data):
-                if self.current_tag in ['h1', 'h2', 'h3', 'p']:
+                if self.current_tag in ['h1', 'h2', 'h3', 'p', 'li']:
                     self.data_buffer += data
             
             def flush_buffer(self):
@@ -168,11 +190,16 @@ def html_to_pdf_with_reportlab(html_path, pdf_path):
                         self.add_element('heading', self.data_buffer)
                     elif self.in_paragraph:
                         self.add_element('paragraph', self.data_buffer)
+                    elif self.in_list_item:
+                        self.add_element('list_item', self.data_buffer, self.current_list_type, self.list_item_count)
                     self.data_buffer = ""
             
-            def add_element(self, element_type, content):
+            def add_element(self, element_type, content, list_type=None, list_item_number=None):
                 if content.strip():
-                    self.elements.append((element_type, content.strip()))
+                    if element_type == 'list_item':
+                        self.elements.append((element_type, content.strip(), list_type, list_item_number))
+                    else:
+                        self.elements.append((element_type, content.strip()))
         
         # Parse HTML
         parser = SimpleHTMLParser()
@@ -191,6 +218,7 @@ def html_to_pdf_with_reportlab(html_path, pdf_path):
                     flowables.append(Spacer(1, 10))
         
         # Process parsed elements
+        current_list_style = None
         for element in parser.elements:
             element_type = element[0]
             
@@ -203,6 +231,33 @@ def html_to_pdf_with_reportlab(html_path, pdf_path):
             elif element_type == 'paragraph':
                 flowables.append(Paragraph(element[1], normal_style))
                 flowables.append(Spacer(1, 10))
+            elif element_type == 'list_start':
+                list_type = element[1]
+                # Create appropriate list style
+                if list_type == 'ul':
+                    current_list_style = styles['Bullet']
+                else:  # ol
+                    current_list_style = styles['OrderedList']
+            elif element_type == 'list_item':
+                content = element[1]
+                list_type = element[2]
+                list_item_number = element[3]
+                
+                # Format list item based on type
+                if list_type == 'ul':
+                    # Bullet list
+                    bullet_text = f"• {content}"
+                    flowables.append(Paragraph(bullet_text, styles['Bullet']))
+                else:  # ol
+                    # Numbered list
+                    number_text = f"{list_item_number}. {content}"
+                    flowables.append(Paragraph(number_text, styles['OrderedList']))
+                
+                flowables.append(Spacer(1, 6))  # Smaller space between list items
+            elif element_type == 'list_end':
+                # Add some space after the list
+                flowables.append(Spacer(1, 10))
+                current_list_style = None
             elif element_type == 'img':
                 img_path = element[1]
                 img_alt = element[2]
