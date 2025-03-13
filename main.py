@@ -106,12 +106,35 @@ def html_to_pdf_with_reportlab(html_path, pdf_path):
         # Add a normal paragraph style
         normal_style = styles['Normal']
         
+        # Extract CSS styles from the HTML
+        css_styles = {}
+        try:
+            # Extract inline styles
+            style_pattern = r'style="([^"]*)"'
+            style_matches = re.findall(style_pattern, html_content)
+            
+            # Process style attributes
+            for style_text in style_matches:
+                # Parse style attributes
+                style_attrs = {}
+                for attr in style_text.split(';'):
+                    if ':' in attr:
+                        key, value = attr.split(':', 1)
+                        style_attrs[key.strip()] = value.strip()
+                
+                # Store for later use
+                css_styles[style_text] = style_attrs
+                
+            print(f"Extracted {len(css_styles)} CSS style definitions", file=sys.stderr)
+        except Exception as css_error:
+            print(f"Error extracting CSS: {str(css_error)}", file=sys.stderr)
+        
         # Basic HTML parsing
         import re
         from html.parser import HTMLParser
         
         # Custom HTML Parser
-        class SimpleHTMLParser(HTMLParser):
+        class StyleAwareHTMLParser(HTMLParser):
             def __init__(self):
                 super().__init__()
                 self.current_tag = None
@@ -124,9 +147,24 @@ def html_to_pdf_with_reportlab(html_path, pdf_path):
                 self.list_item_count = 0
                 self.elements = []
                 self.image_found = False
+                self.current_style = {}  # Store current element's style
             
             def handle_starttag(self, tag, attrs):
                 self.current_tag = tag
+                attrs_dict = dict(attrs)
+                
+                # Extract style if present
+                if 'style' in attrs_dict:
+                    style_text = attrs_dict['style']
+                    # Parse inline style
+                    style_attrs = {}
+                    for attr in style_text.split(';'):
+                        if ':' in attr:
+                            key, value = attr.split(':', 1)
+                            style_attrs[key.strip()] = value.strip()
+                    self.current_style = style_attrs
+                else:
+                    self.current_style = {}
                 
                 # Process different tags
                 if tag == 'h1':
@@ -141,19 +179,25 @@ def html_to_pdf_with_reportlab(html_path, pdf_path):
                 elif tag == 'img':
                     self.image_found = True
                     # Extract image attributes
-                    attrs_dict = dict(attrs)
                     if 'src' in attrs_dict:
-                        self.elements.append(('img', attrs_dict['src'], attrs_dict.get('alt', '')))
+                        self.elements.append(('img', attrs_dict['src'], attrs_dict.get('alt', ''), self.current_style))
                 elif tag == 'ul' or tag == 'ol':
                     self.flush_buffer()
                     self.current_list_type = tag
                     self.list_item_count = 0
                     # Start a new list
-                    self.elements.append(('list_start', tag))
+                    self.elements.append(('list_start', tag, self.current_style))
                 elif tag == 'li':
                     self.flush_buffer()
                     self.in_list_item = True
                     self.list_item_count += 1
+                elif tag == 'div':
+                    # Handle div containers with styles
+                    if self.current_style:
+                        self.elements.append(('div_start', self.current_style))
+                elif tag == 'br':
+                    # Handle line breaks
+                    self.elements.append(('linebreak', None))
             
             def handle_endtag(self, tag):
                 if tag == 'h1':
@@ -174,9 +218,13 @@ def html_to_pdf_with_reportlab(html_path, pdf_path):
                     self.current_list_type = None
                     self.list_item_count = 0
                     self.elements.append(('list_end', tag))
+                elif tag == 'div':
+                    # Close div container
+                    self.elements.append(('div_end', None))
                 
                 self.data_buffer = ""
                 self.current_tag = None
+                self.current_style = {}
             
             def handle_data(self, data):
                 if self.current_tag in ['h1', 'h2', 'h3', 'p', 'li']:
@@ -197,12 +245,12 @@ def html_to_pdf_with_reportlab(html_path, pdf_path):
             def add_element(self, element_type, content, list_type=None, list_item_number=None):
                 if content.strip():
                     if element_type == 'list_item':
-                        self.elements.append((element_type, content.strip(), list_type, list_item_number))
+                        self.elements.append((element_type, content.strip(), list_type, list_item_number, self.current_style))
                     else:
-                        self.elements.append((element_type, content.strip()))
+                        self.elements.append((element_type, content.strip(), self.current_style))
         
         # Parse HTML
-        parser = SimpleHTMLParser()
+        parser = StyleAwareHTMLParser()
         try:
             parser.feed(html_content)
         except Exception as parse_error:
@@ -217,22 +265,85 @@ def html_to_pdf_with_reportlab(html_path, pdf_path):
                     flowables.append(Paragraph(para.strip(), normal_style))
                     flowables.append(Spacer(1, 10))
         
+        # Helper function to apply styles to paragraphs
+        def apply_style_to_paragraph(text, base_style, css_style):
+            style = base_style
+            
+            # Create a copy of the base style to modify
+            from copy import deepcopy
+            from reportlab.lib.colors import HexColor, black
+            from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT
+            
+            custom_style = deepcopy(base_style)
+            
+            try:
+                # Apply CSS styling to reportlab style
+                if 'color' in css_style:
+                    color_value = css_style['color']
+                    if color_value.startswith('#'):
+                        custom_style.textColor = HexColor(color_value)
+                    elif color_value == 'white':
+                        custom_style.textColor = HexColor('#FFFFFF')
+                    elif color_value == 'black':
+                        custom_style.textColor = black
+                
+                if 'font-size' in css_style:
+                    size_text = css_style['font-size']
+                    if 'rem' in size_text:
+                        size = float(size_text.replace('rem', '')) * 12  # Base size is 12pt
+                        custom_style.fontSize = size
+                    elif 'px' in size_text:
+                        size = float(size_text.replace('px', '')) * 0.75  # Convert px to pt (approx)
+                        custom_style.fontSize = size
+                
+                if 'text-align' in css_style:
+                    align = css_style['text-align']
+                    if align == 'center':
+                        custom_style.alignment = TA_CENTER
+                    elif align == 'right':
+                        custom_style.alignment = TA_RIGHT
+                    elif align == 'left':
+                        custom_style.alignment = TA_LEFT
+                
+                if 'font-weight' in css_style and css_style['font-weight'] == 'bold':
+                    custom_style.fontName = 'Helvetica-Bold'
+                
+                if 'margin-bottom' in css_style or 'margin-top' in css_style:
+                    # We'll handle spacing separately with Spacer elements
+                    pass
+                
+                style = custom_style
+            except Exception as style_error:
+                print(f"Error applying style: {str(style_error)}", file=sys.stderr)
+            
+            return style
+        
         # Process parsed elements
         current_list_style = None
         for element in parser.elements:
             element_type = element[0]
             
             if element_type == 'title':
-                flowables.append(Paragraph(element[1], title_style))
+                content = element[1]
+                css_style = element[2] if len(element) > 2 else {}
+                style = apply_style_to_paragraph(content, title_style, css_style)
+                flowables.append(Paragraph(content, style))
                 flowables.append(Spacer(1, 16))
             elif element_type == 'heading':
-                flowables.append(Paragraph(element[1], heading_style))
+                content = element[1]
+                css_style = element[2] if len(element) > 2 else {}
+                style = apply_style_to_paragraph(content, heading_style, css_style)
+                flowables.append(Paragraph(content, style))
                 flowables.append(Spacer(1, 12))
             elif element_type == 'paragraph':
-                flowables.append(Paragraph(element[1], normal_style))
+                content = element[1]
+                css_style = element[2] if len(element) > 2 else {}
+                style = apply_style_to_paragraph(content, normal_style, css_style)
+                flowables.append(Paragraph(content, style))
                 flowables.append(Spacer(1, 10))
             elif element_type == 'list_start':
                 list_type = element[1]
+                css_style = element[2] if len(element) > 2 else {}
                 # Create appropriate list style
                 if list_type == 'ul':
                     current_list_style = styles['Bullet']
@@ -242,16 +353,19 @@ def html_to_pdf_with_reportlab(html_path, pdf_path):
                 content = element[1]
                 list_type = element[2]
                 list_item_number = element[3]
+                css_style = element[4] if len(element) > 4 else {}
                 
                 # Format list item based on type
                 if list_type == 'ul':
                     # Bullet list
                     bullet_text = f"• {content}"
-                    flowables.append(Paragraph(bullet_text, styles['Bullet']))
+                    style = apply_style_to_paragraph(bullet_text, styles['Bullet'], css_style)
+                    flowables.append(Paragraph(bullet_text, style))
                 else:  # ol
                     # Numbered list
                     number_text = f"{list_item_number}. {content}"
-                    flowables.append(Paragraph(number_text, styles['OrderedList']))
+                    style = apply_style_to_paragraph(number_text, styles['OrderedList'], css_style)
+                    flowables.append(Paragraph(number_text, style))
                 
                 flowables.append(Spacer(1, 6))  # Smaller space between list items
             elif element_type == 'list_end':
@@ -261,6 +375,7 @@ def html_to_pdf_with_reportlab(html_path, pdf_path):
             elif element_type == 'img':
                 img_path = element[1]
                 img_alt = element[2]
+                css_style = element[3] if len(element) > 3 else {}
                 
                 # Handle local file paths
                 img_path_obj = Path(img_path)
@@ -271,10 +386,24 @@ def html_to_pdf_with_reportlab(html_path, pdf_path):
                         from PIL import Image as PILImage
                         # Try to open the image to verify it's valid
                         with PILImage.open(img_path_obj) as img_check:
-                            pass  # Just checking if it opens
+                            img_width, img_height = img_check.size
                         
                         # If we get here, the image is valid
-                        img = ReportLabImage(img_path, width=400, height=300)
+                        # Apply CSS styling for width/height if available
+                        width = 400  # Default width
+                        height = 300  # Default height
+                        
+                        if 'max-width' in css_style:
+                            width_text = css_style['max-width']
+                            if 'px' in width_text:
+                                width = float(width_text.replace('px', ''))
+                        
+                        # Maintain aspect ratio
+                        if img_width > 0 and img_height > 0:
+                            aspect = img_height / img_width
+                            height = width * aspect
+                        
+                        img = ReportLabImage(img_path, width=width, height=height)
                         flowables.append(img)
                         if img_alt:
                             flowables.append(Paragraph(img_alt, styles['Italic']))
@@ -290,6 +419,12 @@ def html_to_pdf_with_reportlab(html_path, pdf_path):
                     # Add a placeholder for the missing image
                     flowables.append(Paragraph(f"[Image not found: {img_path}]", styles['Italic']))
                     flowables.append(Spacer(1, 12))
+            elif element_type == 'linebreak':
+                flowables.append(Spacer(1, 10))
+            elif element_type == 'div_start' or element_type == 'div_end':
+                # Currently we don't handle div containers specially
+                # but we could add special handling for background colors, etc.
+                pass
         
         # If we have no flowables, add a default message
         if not flowables:
@@ -453,7 +588,19 @@ async def handle_call_tool(
             if WKHTMLTOPDF_AVAILABLE:
                 try:
                     print(f"Converting HTML to PDF with pdfkit: {doc_path} -> {output_pdf_path}", file=sys.stderr)
-                    pdfkit.from_file(doc_path, output_pdf_path)
+                    # Configure pdfkit options to properly handle CSS
+                    options = {
+                        'enable-local-file-access': True,  # Allow access to local files (for images)
+                        'quiet': '',
+                        'print-media-type': True,  # Use print media CSS
+                        'enable-javascript': True,
+                        'javascript-delay': 1000,  # Wait for JavaScript execution
+                        'no-stop-slow-scripts': True,
+                        'debug-javascript': True,
+                        'load-error-handling': 'ignore',
+                        'load-media-error-handling': 'ignore'
+                    }
+                    pdfkit.from_file(doc_path, output_pdf_path, options=options)
                     if os.path.exists(output_pdf_path) and os.path.getsize(output_pdf_path) > 0:
                         print(f"pdfkit conversion successful", file=sys.stderr)
                         pdf_created = True
