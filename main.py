@@ -65,18 +65,19 @@ async def handle_list_tools() -> list[types.Tool]:
     return [
         types.Tool(
             name="CREATE_DOC",
-            description="Create a document based on the provided text file and images",
+            description="Create a document based on the provided HTML file and images",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "text_file": {"type": "string"},
+                    "html_file": {"type": "string", "description": "Path to the HTML file to convert to PDF"},
                     "images": {
                         "type": "object",
-                        "additionalProperties": {"type": "string"}
+                        "additionalProperties": {"type": "string"},
+                        "description": "Dictionary of image references in the HTML to their file paths"
                     },
-                    "output_pdf": {"type": "string"},
+                    "output_pdf": {"type": "string", "description": "Path where the output PDF should be saved"},
                 },
-                "required": ["text_file", "output_pdf"],
+                "required": ["html_file", "output_pdf"],
             },
         ),
     ]
@@ -501,21 +502,21 @@ async def handle_call_tool(
             return resources
         
         # Get text file path
-        text_file_path = arguments.get("text_file")
-        if not text_file_path:
+        html_file_path = arguments.get("html_file") or arguments.get("text_file")  # Support both parameter names for backward compatibility
+        if not html_file_path:
             resources.append(types.TextContent(
                 type="text",
-                text="Error: No text file provided"
+                text="Error: No HTML file provided. Please specify an HTML file using the 'html_file' parameter."
             ))
             return resources
         
-        print(f"Processing text file: {text_file_path}", file=sys.stderr)
+        print(f"Processing HTML file: {html_file_path}", file=sys.stderr)
         
         # Get output PDF path
         output_pdf_path = arguments.get("output_pdf")
         if not output_pdf_path:
             # Default to same directory as text file with .pdf extension
-            output_pdf_path = os.path.splitext(text_file_path)[0] + ".pdf"
+            output_pdf_path = os.path.splitext(html_file_path)[0] + ".pdf"
         
         print(f"Output PDF path: {output_pdf_path}", file=sys.stderr)
         
@@ -524,10 +525,10 @@ async def handle_call_tool(
         print(f"Images: {images}", file=sys.stderr)
         
         # Check if text file exists
-        if not os.path.exists(text_file_path):
+        if not os.path.exists(html_file_path):
             resources.append(types.TextContent(
                 type="text",
-                text=f"Error: Text file not found: {text_file_path}"
+                text=f"Error: HTML file not found: {html_file_path}"
             ))
             return resources
         
@@ -545,12 +546,12 @@ async def handle_call_tool(
         print(f"Created temporary directory: {temp_dir}", file=sys.stderr)
         
         # Determine file type and process accordingly
-        _, ext = os.path.splitext(text_file_path)
+        _, ext = os.path.splitext(html_file_path)
         
         # Process HTML file
         if ext.lower() in [".html", ".htm"]:
             # Read the HTML content
-            with open(text_file_path, "r", encoding="utf-8") as f:
+            with open(html_file_path, "r", encoding="utf-8") as f:
                 html_content = f.read()
             
             # Process image references in HTML
@@ -576,7 +577,7 @@ async def handle_call_tool(
                 # We're not adding images at the bottom of the document
             
             # Write the processed HTML to the temporary directory
-            doc_path = os.path.join(temp_dir, os.path.basename(text_file_path))
+            doc_path = os.path.join(temp_dir, os.path.basename(html_file_path))
             with open(doc_path, "w", encoding="utf-8") as f:
                 f.write(html_content)
             print(f"Created HTML file with processed image references: {doc_path}", file=sys.stderr)
@@ -642,13 +643,13 @@ async def handle_call_tool(
                 # Add success message
                 resources.append(types.TextContent(
                     type="text",
-                    text=f"Successfully converted {text_file_path} to PDF with {len(images)} images."
+                    text=f"Successfully converted {html_file_path} to PDF with {len(images)} images."
                 ))
             else:
                 # If PDF creation failed, return error message
                 resources.append(types.TextContent(
                     type="text",
-                    text=f"Error: Failed to create PDF from {text_file_path}. Please check the logs for details."
+                    text=f"Error: Failed to create PDF from {html_file_path}. Please check the logs for details."
                 ))
                 
                 # Add suggestions for troubleshooting
@@ -662,7 +663,7 @@ async def handle_call_tool(
         else:
             resources.append(types.TextContent(
                 type="text",
-                text=f"Error: Unsupported file type: {ext}. Only HTML files are supported."
+                text=f"Error: Unsupported file type: {ext}. Only HTML files (.html, .htm) are supported."
             ))
         
         # Clean up temporary directory
